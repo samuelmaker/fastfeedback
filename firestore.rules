@@ -2,13 +2,22 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     match /users/{uid} {
-      allow read, write: if isUser(uid);
+      allow read: if isUser(uid);
+      allow create: if isUser(uid)
+        && request.resource.data.keys().hasOnly(['uid', 'email', 'name', 'provider', 'photoUrl', 'stripeRole'])
+        && request.resource.data.uid == uid;
+      allow update: if isUser(uid)
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['uid', 'email', 'name', 'provider', 'photoUrl', 'stripeRole'])
+        && request.resource.data.uid == uid;
+      allow delete: if false;
       
       match /checkout_sessions/{id} {
         allow read, write: if isUser(uid);
       }
       match /subscriptions/{id} {
-        allow read, write: if isUser(uid);
+        allow read: if isUser(uid);
+        allow write: if false;
       }
     }
     
@@ -23,10 +32,16 @@ service cloud.firestore {
     }
     
     match /feedback/{uid} {
-      allow read: if true;
+      allow read: if resource.data.status == 'active' || isOwner() || isSiteOwner();
       allow delete: if isOwner() || isSiteOwner();
-      allow update: if isOwner() && willBeOwner() || isSiteOwner() && willBeSiteOwner();
-      allow create: if willBeOwner();
+      allow update: if (isOwner() || isSiteOwner())
+        && incomingData().authorId == currentData().authorId
+        && incomingData().siteId == currentData().siteId
+        && incomingData().siteAuthorId == currentData().siteAuthorId
+        && (isSiteOwner() || incomingData().status == currentData().status);
+      allow create: if willBeOwner()
+        && incomingData().status == 'pending'
+        && incomingData().siteAuthorId == get(/databases/$(database)/documents/sites/$(incomingData().siteId)).data.authorId;
     }
     
     match /sites/{uid} {
@@ -43,7 +58,7 @@ function isUser(uid) {
 }
 
 function isSignedIn() {
-  return request.auth.uid != null;
+  return request.auth != null;
 }
 
 function isOwner(){
